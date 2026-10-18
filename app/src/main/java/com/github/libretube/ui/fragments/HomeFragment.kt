@@ -8,6 +8,8 @@ import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.github.libretube.R
 import com.github.libretube.api.MediaServiceRepository
@@ -33,7 +35,6 @@ import com.google.android.material.carousel.UncontainedCarouselStrategy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 
-
 class HomeFragment : Fragment(R.layout.fragment_home) {
     private var _binding: FragmentHomeBinding? = null
     private val binding get() = _binding!!
@@ -42,8 +43,10 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
     private val subscriptionsViewModel: SubscriptionsViewModel by activityViewModels()
     private val trendsViewModel: TrendsViewModel by activityViewModels()
 
+    // 2-column grid adapter for YouTube Shorts
     private val trendingAdapter = VideoCardsAdapter()
-    private val feedAdapter = VideoCardsAdapter(columnWidthDp = 250f)
+    // Full-width vertical feed adapter
+    private val feedAdapter = VideoCardsAdapter(columnWidthDp = null)
     private val watchingAdapter = VideoCardsAdapter(columnWidthDp = 250f)
     private val bookmarkAdapter = CarouselPlaylistAdapter(PlaylistType.PUBLIC)
     private val playlistAdapter = CarouselPlaylistAdapter(PlaylistType.PRIVATE)
@@ -51,6 +54,17 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         _binding = FragmentHomeBinding.bind(view)
         super.onViewCreated(view, savedInstanceState)
+
+        // Set up Shorts shelf as a 2-column grid matching Screenshot 1
+        val shortsGridManager = GridLayoutManager(requireContext(), 2)
+        binding.trendingRV.layoutManager = shortsGridManager
+        binding.trendingRV.isNestedScrollingEnabled = false
+        binding.trendingRV.adapter = trendingAdapter
+
+        // Full-width recommended feed layout
+        binding.featuredRV.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.VERTICAL, false)
+        binding.featuredRV.isNestedScrollingEnabled = false
+        binding.featuredRV.adapter = feedAdapter
 
         binding.bookmarksRV.layoutManager = CarouselLayoutManager(UncontainedCarouselStrategy())
         binding.playlistsRV.layoutManager = CarouselLayoutManager(UncontainedCarouselStrategy())
@@ -61,12 +75,9 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         val playlistsSnapHelper = CarouselSnapHelper()
         playlistsSnapHelper.attachToRecyclerView(binding.playlistsRV)
 
-        binding.trendingRV.adapter = trendingAdapter
-        binding.featuredRV.adapter = feedAdapter
         binding.bookmarksRV.adapter = bookmarkAdapter
         binding.playlistsRV.adapter = playlistAdapter
-        binding.playlistsRV.adapter?.registerAdapterDataObserver(object :
-            RecyclerView.AdapterDataObserver() {
+        binding.playlistsRV.adapter?.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
             override fun onItemRangeRemoved(positionStart: Int, itemCount: Int) {
                 super.onItemRangeRemoved(positionStart, itemCount)
                 if (itemCount == 0) {
@@ -89,19 +100,15 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         binding.featuredTV.setOnClickListener {
             findNavController().navigate(R.id.action_homeFragment_to_subscriptionsFragment)
         }
-
         binding.watchingTV.setOnClickListener {
             findNavController().navigate(R.id.action_homeFragment_to_watchHistoryFragment)
         }
-
         binding.trendingTV.setOnClickListener {
             findNavController().navigate(R.id.action_homeFragment_to_trendsFragment)
         }
-
         binding.playlistsTV.setOnClickListener {
             findNavController().navigate(R.id.action_homeFragment_to_libraryFragment)
         }
-
         binding.bookmarksTV.setOnClickListener {
             findNavController().navigate(R.id.action_homeFragment_to_libraryFragment)
         }
@@ -132,37 +139,23 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
             var selected = trendingCategories.indexOf(currentTrendingCategoryPref)
             MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.category)
-                .setSingleChoiceItems(
-                    categories.map { it.second }.toTypedArray(),
-                    selected
-                ) { _, checked ->
+                .setSingleChoiceItems(categories.map { it.second }.toTypedArray(), selected) { _, checked ->
                     selected = checked
                 }
                 .setNegativeButton(R.string.cancel, null)
                 .setPositiveButton(R.string.okay) { _, _ ->
-                    PreferenceHelper.putString(
-                        PreferenceKeys.TRENDING_CATEGORY,
-                        trendingCategories[selected].name
-                    )
+                    PreferenceHelper.putString(PreferenceKeys.TRENDING_CATEGORY, trendingCategories[selected].name)
                     fetchHomeFeed()
                 }
                 .show()
         }
 
-        binding.refreshButton.setOnClickListener {
-            fetchHomeFeed()
-        }
-
-        binding.changeInstance.setOnClickListener {
-            redirectToIntentSettings()
-        }
+        binding.refreshButton.setOnClickListener { fetchHomeFeed() }
+        binding.changeInstance.setOnClickListener { redirectToIntentSettings() }
     }
 
     override fun onResume() {
         super.onResume()
-
-        // Avoid re-fetching when re-entering the screen if it was loaded successfully, except when
-        // the value of trending region has changed
         val isTrendingRegionChanged = homeViewModel.trending.value?.let {
             it.second.region != PreferenceHelper.getTrendingRegion(requireContext())
         } == true
@@ -194,8 +187,6 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         if (trends == null) return
         val (category, trendingStreams) = trends
 
-        // cache the loaded trends in the [TrendsViewModel] so that the trends don't need to be
-        // reloaded there
         val region = PreferenceHelper.getTrendingRegion(requireContext())
         trendsViewModel.setStreamsForCategory(
             category,
@@ -203,16 +194,15 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         )
 
         makeVisible(binding.trendingRV, binding.trendingTV)
-        trendingAdapter.submitList(trendingStreams.streams.take(10))
+        // Submit 4 items for the 2x2 Shorts grid
+        trendingAdapter.submitList(trendingStreams.streams.take(4))
     }
 
     private fun showFeed(streamItems: List<StreamItem>?) {
         if (streamItems == null) return
 
         makeVisible(binding.featuredRV, binding.featuredTV)
-        val feedVideos = streamItems.take(20)
-
-        feedAdapter.submitList(feedVideos)
+        feedAdapter.submitList(streamItems.take(20))
     }
 
     private fun showBookmarks(bookmarks: List<PlaylistBookmark>?) {
@@ -249,11 +239,7 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
     }
 
     private fun updateLoading(isLoading: Boolean) {
-        if (isLoading) {
-            showLoading()
-        } else {
-            hideLoading()
-        }
+        if (isLoading) showLoading() else hideLoading()
     }
 
     private fun showLoading() {
@@ -266,8 +252,7 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         binding.progress.isVisible = false
         binding.refresh.isRefreshing = false
 
-        val hasContent = homeViewModel.loadedSuccessfully.value == true
-        if (hasContent) {
+        if (homeViewModel.loadedSuccessfully.value == true) {
             showContent()
         } else {
             showNothingHere()
@@ -287,14 +272,10 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
 
     private fun showChangeInstanceSnackBar() {
         val root = _binding?.root ?: return
-        Snackbar
-            .make(root, R.string.suggest_change_instance, Snackbar.LENGTH_LONG)
-            .apply {
-                setAction(R.string.change) {
-                    redirectToIntentSettings()
-                }
-                show()
-            }
+        Snackbar.make(root, R.string.suggest_change_instance, Snackbar.LENGTH_LONG).apply {
+            setAction(R.string.change) { redirectToIntentSettings() }
+            show()
+        }
     }
 
     private fun redirectToIntentSettings() {
