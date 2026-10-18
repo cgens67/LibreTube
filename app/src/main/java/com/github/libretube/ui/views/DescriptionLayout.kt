@@ -18,8 +18,11 @@ import com.github.libretube.databinding.DescriptionLayoutBinding
 import com.github.libretube.enums.SbSkipOptions
 import com.github.libretube.extensions.formatShort
 import com.github.libretube.helpers.ClipboardHelper
+import com.github.libretube.helpers.ImageHelper
+import com.github.libretube.helpers.NavigationHelper
 import com.github.libretube.helpers.PlayerHelper
 import com.github.libretube.ui.activities.VideoTagsAdapter
+import com.github.libretube.ui.extensions.setupSubscriptionButton
 import com.github.libretube.util.HtmlParser
 import com.github.libretube.util.LinkHandler
 import com.github.libretube.util.TextUtils
@@ -27,30 +30,55 @@ import java.util.Locale
 
 class DescriptionLayout(
     context: Context,
-    attributeSet: AttributeSet?
+    attributeSet: AttributeSet? = null
 ) : LinearLayout(context, attributeSet) {
+
     val binding = DescriptionLayoutBinding.inflate(LayoutInflater.from(context), this, true)
     private var streams: Streams? = null
     var handleLink: (link: String) -> Unit = {}
 
+    // YouTube-style callbacks
+    var onCommentsClick: () -> Unit = {}
+    var onShareClick: () -> Unit = {}
+    var onDownloadClick: () -> Unit = {}
+    var onMoreOptionsClick: () -> Unit = {}
+    var onRemixClick: () -> Unit = {}
+    var onLikeClick: () -> Unit = {}
+    var onDislikeClick: () -> Unit = {}
+
     private val videoTagsAdapter = VideoTagsAdapter()
 
     init {
-        binding.playerTitleLayout.setOnClickListener {
+        orientation = VERTICAL
+
+        binding.playerTitle.setOnClickListener {
             toggleDescription()
         }
-        binding.playerTitleLayout.setOnLongClickListener {
+        binding.metadataSubtext.setOnClickListener {
+            toggleDescription()
+        }
+
+        binding.playerTitle.setOnLongClickListener {
             streams?.title?.let { ClipboardHelper.save(context, text = it) }
             true
         }
 
         binding.tagsRecycler.adapter = videoTagsAdapter
+
+        // Action pills click listeners
+        binding.btnShare.setOnClickListener { onShareClick() }
+        binding.btnMoreOptions.setOnClickListener { onMoreOptionsClick() }
+        binding.btnRemix.setOnClickListener { onRemixClick() }
+        binding.btnLikeIcon.setOnClickListener { onLikeClick() }
+        binding.btnDislikeIcon.setOnClickListener { onDislikeClick() }
+
+        // Comments preview card
+        binding.commentsCard.setOnClickListener { onCommentsClick() }
     }
 
     fun setSegments(segments: List<Segment>) {
         if (PlayerHelper.getSponsorBlockCategories()[SB_SPONSOR_CATEGORY] == SbSkipOptions.OFF) {
-            // only show the badge if the user requested to show sponsors
-           return
+            return
         }
 
         val category = segments.filter { it.actionType == Segment.TYPE_FULL }.firstNotNullOfOrNull { it.category }
@@ -65,18 +93,52 @@ class DescriptionLayout(
 
         val views = streams.views.formatShort()
         val date = TextUtils.formatRelativeDate(streams.uploaded ?: -1L)
+        val likes = streams.likes.formatShort()
+
         binding.run {
-            playerViewsInfo.text = context.getString(R.string.normal_views, views, TextUtils.SEPARATOR + date)
-
-            textLike.text = streams.likes.formatShort()
-            textDislike.isVisible = streams.dislikes >= 0
-            textDislike.text = streams.dislikes.formatShort()
-
+            // 1. Title (max 2 lines in collapsed state)
             playerTitle.text = streams.title
-            playerDescription.text = streams.description
 
+            // 2. Metadata Subtext: @handle • likes • views • time • more
+            val handleOrName = streams.uploader
+            metadataSubtext.text = "$handleOrName  •  $likes likes  •  $views views  •  $date  more"
+
+            // 3. Channel Info Row & Subscribe Pill
+            channelName.text = streams.uploader
+            ImageHelper.loadImage(streams.uploaderAvatar, channelAvatar, true)
+
+            channelAvatar.setOnClickListener {
+                NavigationHelper.navigateChannel(context, streams.uploaderUrl)
+            }
+            channelName.setOnClickListener {
+                NavigationHelper.navigateChannel(context, streams.uploaderUrl)
+            }
+
+            btnSubscribe.setupSubscriptionButton(
+                streams.uploaderUrl?.substringAfterLast("/"),
+                streams.uploader,
+                streams.uploaderAvatar,
+                streams.uploaderVerified
+            )
+
+            // 4. Action Pill Bar
+            likeCountText.text = likes
+
+            // 5. Comments Preview Teaser Card
+            val commentCount = streams.commentsCount ?: 0
+            commentsTitle.text = "${context.getString(R.string.comments)}  $commentCount"
+
+            if (!streams.previewComment.isNullOrBlank()) {
+                commentTeaserAvatar.isVisible = true
+                commentTeaserText.text = streams.previewComment
+                ImageHelper.loadImage(streams.previewCommentAvatar, commentTeaserAvatar, true)
+            } else {
+                commentTeaserAvatar.isGone = true
+                commentTeaserText.text = context.getString(R.string.comments)
+            }
+
+            // Description and Meta Info
             metaInfo.isVisible = streams.metaInfo.isNotEmpty()
-            // generate a meta info text with clickable links using html
             val metaInfoText = streams.metaInfo.joinToString("\n\n") { info ->
                 val text = info.description.takeIf { it.isNotBlank() } ?: info.title
                 val links = info.urls.mapIndexed { index, url ->
@@ -89,7 +151,6 @@ class DescriptionLayout(
             val visibility = when (streams.visibility) {
                 "public" -> context?.getString(R.string.visibility_public)
                 "unlisted" -> context?.getString(R.string.visibility_unlisted)
-                // currently no other visibility could be returned, might change in the future however
                 else -> streams.visibility.replaceFirstChar {
                     if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
                 }
@@ -102,70 +163,38 @@ class DescriptionLayout(
             if (streams.tags.isNotEmpty()) {
                 videoTagsAdapter.submitList(streams.tags)
             }
-            binding.tagsRecycler.isVisible = streams.tags.isNotEmpty()
+            tagsRecycler.isVisible = streams.tags.isNotEmpty()
 
             setupDescription(streams.description)
         }
     }
 
-    /**
-     * Collapses the description, if it is currently expanded.
-     */
     fun collapseDescription() {
-        val isCollapsed = binding.descLinLayout.isGone
-        if (!isCollapsed) {
+        if (binding.playerDescription.isVisible) {
             toggleDescription()
         }
     }
 
-    /**
-     * Set up the description text with video links and timestamps
-     */
     private fun setupDescription(description: String) {
         val descTextView = binding.playerDescription
-        // detect whether the description is html formatted
         if (description.contains("<") && description.contains(">")) {
             descTextView.movementMethod = LinkMovementMethodCompat.getInstance()
             descTextView.text = description.replace("</a>", "</a> ")
                 .parseAsHtml(tagHandler = HtmlParser(LinkHandler(handleLink)))
         } else {
-            // Links can be present as plain text
             descTextView.autoLinkMask = Linkify.WEB_URLS
             descTextView.text = description
         }
     }
 
     private fun toggleDescription() {
-        val streams = streams ?: return
-
-        val isNewStateExpanded = binding.descLinLayout.isGone
-        if (!isNewStateExpanded) {
-            // show a short version of the view count and date
-            val formattedDate = TextUtils.formatRelativeDate(streams.uploaded ?: -1L)
-            binding.playerViewsInfo.text = context.getString(R.string.normal_views, streams.views.formatShort(),  TextUtils.SEPARATOR + formattedDate)
-
-            // limit the title height to two lines
-            binding.playerTitle.maxLines = 2
-        } else {
-            // show the full view count and upload date
-            val formattedDate = streams.uploadTimestamp?.let { TextUtils.localizeInstant(it) }.orEmpty()
-            binding.playerViewsInfo.text = context.getString(R.string.normal_views, "%,d".format(streams.views),  TextUtils.SEPARATOR + formattedDate)
-
-            // show the whole title
-            binding.playerTitle.maxLines = Int.MAX_VALUE
-        }
-
-        binding.playerDescriptionArrow.animate()
-            .rotation(if (isNewStateExpanded) 180F else 0F)
-            .setDuration(ANIMATION_DURATION)
-            .start()
-
+        val isNewStateExpanded = !binding.playerDescription.isVisible
         binding.playerDescription.isVisible = isNewStateExpanded
         binding.descLinLayout.isVisible = isNewStateExpanded
+        binding.playerTitle.maxLines = if (isNewStateExpanded) Int.MAX_VALUE else 2
     }
 
     companion object {
-        private const val ANIMATION_DURATION = 250L
         private const val SB_SPONSOR_CATEGORY = "sponsor_category"
     }
 }
