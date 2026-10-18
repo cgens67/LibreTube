@@ -37,26 +37,17 @@ class DescriptionLayout(
     private var streams: Streams? = null
     var handleLink: (link: String) -> Unit = {}
 
-    // YouTube-style callbacks
     var onCommentsClick: () -> Unit = {}
     var onShareClick: () -> Unit = {}
-    var onDownloadClick: () -> Unit = {}
     var onMoreOptionsClick: () -> Unit = {}
-    var onRemixClick: () -> Unit = {}
-    var onLikeClick: () -> Unit = {}
-    var onDislikeClick: () -> Unit = {}
 
     private val videoTagsAdapter = VideoTagsAdapter()
 
     init {
         orientation = VERTICAL
 
-        binding.playerTitle.setOnClickListener {
-            toggleDescription()
-        }
-        binding.metadataSubtext.setOnClickListener {
-            toggleDescription()
-        }
+        binding.playerTitle.setOnClickListener { toggleDescription() }
+        binding.metadataSubtext.setOnClickListener { toggleDescription() }
 
         binding.playerTitle.setOnLongClickListener {
             streams?.title?.let { ClipboardHelper.save(context, text = it) }
@@ -65,14 +56,8 @@ class DescriptionLayout(
 
         binding.tagsRecycler.adapter = videoTagsAdapter
 
-        // Action pills click listeners
         binding.btnShare.setOnClickListener { onShareClick() }
         binding.btnMoreOptions.setOnClickListener { onMoreOptionsClick() }
-        binding.btnRemix.setOnClickListener { onRemixClick() }
-        binding.btnLikeIcon.setOnClickListener { onLikeClick() }
-        binding.btnDislikeIcon.setOnClickListener { onDislikeClick() }
-
-        // Comments preview card
         binding.commentsCard.setOnClickListener { onCommentsClick() }
     }
 
@@ -96,14 +81,13 @@ class DescriptionLayout(
         val likes = streams.likes.formatShort()
 
         binding.run {
-            // 1. Title (max 2 lines in collapsed state)
+            // 1. Title
             playerTitle.text = streams.title
 
-            // 2. Metadata Subtext: @handle • likes • views • time • more
-            val handleOrName = streams.uploader
-            metadataSubtext.text = "$handleOrName  •  $likes likes  •  $views views  •  $date  more"
+            // 2. Metadata: @handle • likes • views • date  more
+            metadataSubtext.text = "${streams.uploader}  •  $likes likes  •  $views views  •  $date  more"
 
-            // 3. Channel Info Row & Subscribe Pill
+            // 3. Channel Info & Subscribe Pill
             channelName.text = streams.uploader
             ImageHelper.loadImage(streams.uploaderAvatar, channelAvatar, true)
 
@@ -121,23 +105,10 @@ class DescriptionLayout(
                 streams.uploaderVerified
             )
 
-            // 4. Action Pill Bar
+            // 4. Action Pills
             likeCountText.text = likes
 
-            // 5. Comments Preview Teaser Card
-            val commentCount = streams.commentsCount ?: 0
-            commentsTitle.text = "${context.getString(R.string.comments)}  $commentCount"
-
-            if (!streams.previewComment.isNullOrBlank()) {
-                commentTeaserAvatar.isVisible = true
-                commentTeaserText.text = streams.previewComment
-                ImageHelper.loadImage(streams.previewCommentAvatar, commentTeaserAvatar, true)
-            } else {
-                commentTeaserAvatar.isGone = true
-                commentTeaserText.text = context.getString(R.string.comments)
-            }
-
-            // Description and Meta Info
+            // 5. Collapsible Description Body
             metaInfo.isVisible = streams.metaInfo.isNotEmpty()
             val metaInfoText = streams.metaInfo.joinToString("\n\n") { info ->
                 val text = info.description.takeIf { it.isNotBlank() } ?: info.title
@@ -155,6 +126,7 @@ class DescriptionLayout(
                     if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
                 }
             }.orEmpty()
+
             additionalVideoInfo.text =
                 "${context?.getString(R.string.category)}: ${streams.category}\n" +
                 "${context?.getString(R.string.license)}: ${streams.license}\n" +
@@ -169,8 +141,35 @@ class DescriptionLayout(
         }
     }
 
+    /**
+     * Updates the comment count in the preview card when loaded by CommentsViewModel
+     */
+    fun setCommentCount(count: Long?) {
+        if (count != null && count >= 0) {
+            binding.commentsTitle.text = "${context.getString(R.string.comments)}  ${count.formatShort()}"
+        } else {
+            binding.commentsTitle.text = context.getString(R.string.comments)
+        }
+    }
+
+    /**
+     * Updates the comment teaser preview text and avatar
+     */
+    fun setCommentTeaser(avatarUrl: String?, commentText: String?) {
+        if (!commentText.isNullOrBlank()) {
+            binding.commentTeaserText.text = commentText
+            if (!avatarUrl.isNullOrBlank()) {
+                binding.commentTeaserAvatar.isVisible = true
+                ImageHelper.loadImage(avatarUrl, binding.commentTeaserAvatar, true)
+            } else {
+                binding.commentTeaserAvatar.isGone = true
+            }
+        }
+    }
+
     fun collapseDescription() {
-        if (binding.playerDescription.isVisible) {
+        val isCollapsed = binding.descLinLayout.isGone
+        if (!isCollapsed) {
             toggleDescription()
         }
     }
@@ -188,10 +187,9 @@ class DescriptionLayout(
     }
 
     private fun toggleDescription() {
-        val isNewStateExpanded = !binding.playerDescription.isVisible
-        binding.playerDescription.isVisible = isNewStateExpanded
-        binding.descLinLayout.isVisible = isNewStateExpanded
+        val isNewStateExpanded = binding.descLinLayout.isGone
         binding.playerTitle.maxLines = if (isNewStateExpanded) Int.MAX_VALUE else 2
+        binding.descLinLayout.isVisible = isNewStateExpanded
     }
 
     companion object {
