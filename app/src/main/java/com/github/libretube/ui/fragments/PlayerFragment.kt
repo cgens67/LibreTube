@@ -95,6 +95,7 @@ import com.github.libretube.ui.dialogs.ShareDialog
 import com.github.libretube.ui.extensions.animateDown
 import com.github.libretube.ui.extensions.getSystemInsets
 import com.github.libretube.ui.extensions.setOnBackPressed
+import com.github.libretube.ui.extensions.setupSubscriptionButton
 import com.github.libretube.ui.interfaces.CustomPlayerCallback
 import com.github.libretube.ui.interfaces.TimeFrameReceiver
 import com.github.libretube.ui.listeners.SeekbarPreviewListener
@@ -382,6 +383,11 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
             }
         }
 
+        // Observe comment count to update the preview card in DescriptionLayout
+        commentsViewModel.commentCountLiveData.observe(viewLifecycleOwner) { count ->
+            binding.descriptionLayout.setCommentCount(count)
+        }
+
         val localDownloadVersion = if (!isOffline && createNewSession) {
             runBlocking(Dispatchers.IO) { DatabaseHolder.Database.downloadDao().findById(videoId) }
         } else null
@@ -565,30 +571,13 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
             false
         )
 
-        // YouTube DescriptionLayout action hooks
+        // DescriptionLayout click callbacks
         binding.descriptionLayout.onCommentsClick = {
-            if (this::streams.isInitialized) {
-                updateMaxSheetHeight()
-                commentsViewModel.videoIdLiveData.updateIfChanged(videoId)
-                CommentsSheet()
-                    .apply { arguments = bundleOf(IntentData.channelAvatar to streams.uploaderAvatar) }
-                    .show(childFragmentManager)
-            }
+            if (this::streams.isInitialized) openCommentsSheet()
         }
 
         binding.descriptionLayout.onShareClick = {
-            if (this::streams.isInitialized) {
-                val bundle = bundleOf(
-                    IntentData.id to videoId,
-                    IntentData.shareObjectType to ShareObjectType.VIDEO,
-                    IntentData.shareData to ShareData(
-                        title = streams.title,
-                        previewImageUrl = streams.thumbnailUrl,
-                        currentPosition = playerController.currentPosition / 1000
-                    )
-                )
-                ShareDialog().apply { arguments = bundle }.show(childFragmentManager, ShareDialog::class.java.name)
-            }
+            if (this::streams.isInitialized) openShareDialog()
         }
 
         binding.descriptionLayout.onMoreOptionsClick = {
@@ -600,12 +589,80 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
 
         binding.descriptionLayout.handleLink = this::handleLink
 
+        binding.commentsToggle.setOnClickListener {
+            if (this::streams.isInitialized) openCommentsSheet()
+        }
+
+        binding.relPlayerShare.setOnClickListener {
+            if (this::streams.isInitialized) openShareDialog()
+        }
+
+        binding.relPlayerBackground.setOnClickListener {
+            switchToAudioMode()
+        }
+
+        binding.relPlayerPip.isVisible = isPipAvailable()
+        binding.relPlayerPip.setOnClickListener {
+            PictureInPictureCompat.enterPictureInPictureMode(requireActivity(), pipParams)
+            isEnteringPiPMode = true
+        }
+
+        binding.relPlayerSave.setOnClickListener {
+            if (!::streams.isInitialized) return@setOnClickListener
+            AddToPlaylistDialog().apply {
+                arguments = bundleOf(IntentData.videoInfo to streams.toStreamItem(videoId))
+            }.show(childFragmentManager, AddToPlaylistDialog::class.java.name)
+        }
+
         playerControlsBinding.skipPrev.setOnClickListener {
             PlayingQueue.getPrev()?.let { prev -> playVideo(prev) }
         }
         playerControlsBinding.skipNext.setOnClickListener {
             PlayingQueue.getNext()?.let { next -> playVideo(next) }
         }
+
+        binding.relPlayerDownload.setOnClickListener {
+            if (!this::streams.isInitialized) return@setOnClickListener
+            DownloadHelper.startDownloadDialog(requireContext(), childFragmentManager, videoId)
+        }
+
+        binding.relPlayerScreenshot.setOnClickListener {
+            if (!this::streams.isInitialized) return@setOnClickListener
+            val surfaceView = binding.player.videoSurfaceView as? SurfaceView ?: return@setOnClickListener
+            val bmp = Bitmap.createBitmap(surfaceView.width, surfaceView.height, Bitmap.Config.ARGB_8888)
+
+            PixelCopy.request(surfaceView, bmp, { _ ->
+                screenshotBitmap = bmp
+                val currentPosition = playerController.currentPosition.toFloat() / 1000
+                openScreenshotFile.launch("${streams.title}-${currentPosition}.png")
+            }, handler)
+        }
+
+        binding.playerChannel.setOnClickListener {
+            if (!this::streams.isInitialized) return@setOnClickListener
+            NavigationHelper.navigateChannel(requireContext(), streams.uploaderUrl)
+        }
+    }
+
+    private fun openCommentsSheet() {
+        updateMaxSheetHeight()
+        commentsViewModel.videoIdLiveData.updateIfChanged(videoId)
+        CommentsSheet()
+            .apply { arguments = bundleOf(IntentData.channelAvatar to streams.uploaderAvatar) }
+            .show(childFragmentManager)
+    }
+
+    private fun openShareDialog() {
+        val bundle = bundleOf(
+            IntentData.id to videoId,
+            IntentData.shareObjectType to ShareObjectType.VIDEO,
+            IntentData.shareData to ShareData(
+                title = streams.title,
+                previewImageUrl = streams.thumbnailUrl,
+                currentPosition = playerController.currentPosition / 1000
+            )
+        )
+        ShareDialog().apply { arguments = bundle }.show(childFragmentManager, ShareDialog::class.java.name)
     }
 
     private fun updateMaxSheetHeight() {
@@ -869,11 +926,41 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
         binding.descriptionLayout.setStreams(streams)
         toggleVideoInfoVisibility(true)
 
+        // Trigger fetching comment count so the teaser card displays count
+        commentsViewModel.videoIdLiveData.updateIfChanged(videoId)
+
+        binding.apply {
+            ImageHelper.loadImage(streams.uploaderAvatar, binding.playerChannelImage, true)
+            binding.playerChannelImage.isVisible = streams.uploaderAvatar != null
+
+            playerChannelName.text = streams.uploader
+            titleTextView.text = streams.title
+
+            playerChannelSubCount.text = context?.getString(
+                R.string.subscribers,
+                streams.uploaderSubscriberCount.formatShort()
+            )
+            playerChannelSubCount.isVisible = streams.uploaderSubscriberCount >= 0
+
+            relPlayerDownload.isVisible = !streams.isLive && !isOffline
+        }
+
         playerControlsBinding.exoTitle.text = streams.title
         chaptersViewModel.chaptersLiveData.postValue(streams.chapters)
 
         lifecycleScope.launch {
             showRelatedStreams()
+        }
+
+        if (streams.uploaderUrl != null) {
+            binding.playerSubscribe.setupSubscriptionButton(
+                streams.uploaderUrl!!.toID(),
+                streams.uploader,
+                streams.uploaderAvatar,
+                streams.uploaderVerified
+            )
+        } else {
+            binding.playerSubscribe.isGone = true
         }
 
         playerControlsBinding.seekbarPreview.isGone = true
@@ -908,7 +995,7 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
             streams.relatedStreams.filter { !it.title.isNullOrBlank() }
         }
 
-        // Full width vertical card list matching YouTube Recommendation list
+        // Full-width vertical card list matching YouTube recommendations in Screenshot 2
         binding.relatedRecView.adapter = VideoCardsAdapter(columnWidthDp = null).also { adapter ->
             adapter.submitList(relatedStreams)
         }
