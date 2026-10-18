@@ -3,11 +3,13 @@ package com.github.libretube.ui.adapters
 import android.annotation.SuppressLint
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.os.bundleOf
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.recyclerview.widget.ListAdapter
+import com.github.libretube.R
 import com.github.libretube.api.SponsorBlockLabelHelper
 import com.github.libretube.api.obj.StreamItem
 import com.github.libretube.constants.IntentData
@@ -42,21 +44,19 @@ class VideoCardsAdapter(private val columnWidthDp: Float? = null) :
     fun removeItemById(videoId: String) {
         val index = currentList.indexOfFirst {
             it.url?.toID() == videoId
-        }.takeIf { it > 0 } ?: return
+        }.takeIf { it >= 0 } ?: return
         val updatedList = currentList.toMutableList().also {
             it.removeAt(index)
         }
-
         submitList(updatedList)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoCardsViewHolder {
         val layoutInflater = LayoutInflater.from(parent.context)
-        return when {
-            viewType == CAUGHT_UP_TYPE -> VideoCardsViewHolder(
+        return when (viewType) {
+            CAUGHT_UP_TYPE -> VideoCardsViewHolder(
                 AllCaughtUpRowBinding.inflate(layoutInflater, parent, false)
             )
-
             else -> VideoCardsViewHolder(
                 TrendingRowBinding.inflate(layoutInflater, parent, false)
             )
@@ -73,14 +73,36 @@ class VideoCardsAdapter(private val columnWidthDp: Float? = null) :
         val fragmentManager = activity.supportFragmentManager
 
         holder.trendingRowBinding?.apply {
-            // set a fixed width for better visuals
             if (columnWidthDp != null) {
                 root.updateLayoutParams {
                     width = columnWidthDp.dpToPx()
                 }
+            } else {
+                root.updateLayoutParams {
+                    width = ViewGroup.LayoutParams.MATCH_PARENT
+                }
             }
-            watchProgress.setWatchProgressLength(videoId, video.duration ?: 0L)
 
+            // Shorts vs Normal Video layout adjustment
+            if (video.isShort == true) {
+                // Shorts 9:16 vertical styling
+                thumbnail.updateLayoutParams<ConstraintLayout.LayoutParams> {
+                    dimensionRatio = "9:16"
+                }
+                channelImageContainer.isGone = true
+                thumbnailDuration.isGone = true
+            } else {
+                // 16:9 aspect ratio standard card
+                thumbnail.updateLayoutParams<ConstraintLayout.LayoutParams> {
+                    dimensionRatio = "16:9"
+                }
+                thumbnailDuration.isVisible = true
+                video.duration?.let {
+                    thumbnailDuration.setFormattedDuration(it, video.isShort, video.uploaded)
+                }
+            }
+
+            watchProgress.setWatchProgressLength(videoId, video.duration ?: 0L)
             textViewTitle.text = video.title
             textViewChannel.text = TextUtils.formatViewsString(
                 root.context,
@@ -89,16 +111,9 @@ class VideoCardsAdapter(private val columnWidthDp: Float? = null) :
                 video.uploaderName
             )
 
-            video.duration?.let {
-                thumbnailDuration.setFormattedDuration(
-                    it,
-                    video.isShort,
-                    video.uploaded
-                )
-            }
             ImageHelper.loadImage(video.thumbnail, thumbnail)
 
-            if (video.uploaderAvatar != null) {
+            if (video.uploaderAvatar != null && video.isShort != true) {
                 channelImageContainer.isVisible = true
                 ImageHelper.loadImage(video.uploaderAvatar, channelImage, true)
                 channelImage.setOnClickListener {
@@ -106,10 +121,8 @@ class VideoCardsAdapter(private val columnWidthDp: Float? = null) :
                 }
             } else {
                 channelImageContainer.isGone = true
-                textViewChannel.setOnClickListener {
-                    NavigationHelper.navigateChannel(root.context, video.uploaderUrl)
-                }
             }
+
             root.setOnClickListener {
                 NavigationHelper.navigateVideo(root.context, PlayerData(videoId))
             }
@@ -127,7 +140,6 @@ class VideoCardsAdapter(private val columnWidthDp: Float? = null) :
                 true
             }
 
-            // always hide the icon, to avoid issues where the icon is recycled and shown until the web requests succeeds
             sponsorBadgeCard.isVisible = false
             CoroutineScope(Dispatchers.IO).launch {
                 if (PlayerHelper.sponsorBlockEnabled) {
@@ -136,13 +148,10 @@ class VideoCardsAdapter(private val columnWidthDp: Float? = null) :
                         val category = sponsor?.segments?.firstOrNull()?.category
                         sponsorBadgeCard.isVisible = category != null
                         SponsorBlockLabelHelper.categoryIcon(category)?.let {
-                            sponsorBadgeIcon.setImageDrawable(
-                                context.getDrawable(it)
-                            )
+                            sponsorBadgeIcon.setImageDrawable(context.getDrawable(it))
                         }
                         sponsorBadgeIcon.tooltipText =
-                            SponsorBlockLabelHelper.categoryLabel(category)
-                                ?.let { context.getString(it) }
+                            SponsorBlockLabelHelper.categoryLabel(category)?.let { context.getString(it) }
                     }
                 }
 
@@ -159,7 +168,6 @@ class VideoCardsAdapter(private val columnWidthDp: Float? = null) :
     companion object {
         private const val NORMAL_TYPE = 0
         private const val CAUGHT_UP_TYPE = 1
-
         const val CAUGHT_UP_STREAM_TYPE = "caught"
     }
 }
