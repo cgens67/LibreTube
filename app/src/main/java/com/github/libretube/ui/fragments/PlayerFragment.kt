@@ -338,25 +338,22 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
         _binding = FragmentPlayerBinding.bind(view)
         super.onViewCreated(view, savedInstanceState)
 
-        // Fix tiny video surface stuck in top-left: Ensure proper resize mode and frame bounds
+        // Fix tiny video surface: ensure the PlayerView fills its frame correctly
         binding.player.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         binding.player.videoSurfaceView?.apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
             requestLayout()
         }
 
-        // Fix duplication: Hide old duplicate views from fragment_player.xml
+        // Hide duplicate views from fragment_player.xml to prevent double channel rows & buttons
         binding.playerChannel.isGone = true
         binding.playerSubscribe.isGone = true
         binding.commentsToggle.isGone = true
-        runCatching {
-            binding.root.findViewById<View>(R.id.player_button_container)?.isGone = true
-            binding.root.findViewById<View>(R.id.rel_player_share)?.isGone = true
-            binding.root.findViewById<View>(R.id.rel_player_download)?.isGone = true
-            binding.root.findViewById<View>(R.id.rel_player_save)?.isGone = true
-            binding.root.findViewById<View>(R.id.rel_player_background)?.isGone = true
-            binding.root.findViewById<View>(R.id.rel_player_pip)?.isGone = true
-        }
+        binding.relPlayerShare.isGone = true
+        binding.relPlayerDownload.isGone = true
+        binding.relPlayerSave.isGone = true
+        binding.relPlayerBackground.isGone = true
+        binding.relPlayerPip.isGone = true
 
         activity?.getSystemInsets()?.let { systemBars ->
             with(binding.root) {
