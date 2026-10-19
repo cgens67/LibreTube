@@ -15,12 +15,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams
+import android.widget.FrameLayout
 import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -338,14 +340,24 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
         _binding = FragmentPlayerBinding.bind(view)
         super.onViewCreated(view, savedInstanceState)
 
-        // Fix tiny video surface: ensure the PlayerView fills its frame correctly
+        // Fix tiny video surface stuck in top-left corner by ensuring proper layout params and resetting scale
         binding.player.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        binding.player.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)?.apply {
+            scaleX = 1f
+            scaleY = 1f
+        }
         binding.player.videoSurfaceView?.apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            scaleX = 1f
+            scaleY = 1f
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER
+            )
             requestLayout()
         }
 
-        // Hide duplicate views from fragment_player.xml to prevent double channel rows & buttons
+        // Hide duplicate views in fragment_player.xml so only DescriptionLayout's YouTube row shows
         binding.playerChannel.isGone = true
         binding.playerSubscribe.isGone = true
         binding.commentsToggle.isGone = true
