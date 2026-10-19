@@ -220,10 +220,25 @@ class ChannelFragment : Fragment(R.layout.fragment_channel) {
                 ?: channelTab.name.replaceFirstChar(Char::titlecase)
             tabList.add(ChannelTab(tabName, channelTab.data))
         }
-        channelContentAdapter.notifyItemRangeChanged(0, tabList.size - 1)
+        channelContentAdapter.notifyItemRangeChanged(0, tabList.size)
     }
 
     companion object {
         private const val VIDEOS_TAB_KEY = "videos"
+    }
+}
+
+class ChannelContentAdapter(
+    private val list: List<ChannelTab>,
+    private val channelId: String?,
+    fragment: Fragment
+) : FragmentStateAdapter(fragment) {
+    override fun getItemCount() = list.size
+
+    override fun createFragment(position: Int) = ChannelContentFragment().apply {
+        arguments = bundleOf(
+            IntentData.tabData to list[position],
+            IntentData.channelId to channelId
+        )
     }
 }
