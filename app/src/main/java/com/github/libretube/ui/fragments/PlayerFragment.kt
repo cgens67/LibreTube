@@ -50,6 +50,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.github.libretube.R
 import com.github.libretube.api.JsonHelper
@@ -95,7 +96,6 @@ import com.github.libretube.ui.dialogs.ShareDialog
 import com.github.libretube.ui.extensions.animateDown
 import com.github.libretube.ui.extensions.getSystemInsets
 import com.github.libretube.ui.extensions.setOnBackPressed
-import com.github.libretube.ui.extensions.setupSubscriptionButton
 import com.github.libretube.ui.interfaces.CustomPlayerCallback
 import com.github.libretube.ui.interfaces.TimeFrameReceiver
 import com.github.libretube.ui.listeners.SeekbarPreviewListener
@@ -338,6 +338,26 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
         _binding = FragmentPlayerBinding.bind(view)
         super.onViewCreated(view, savedInstanceState)
 
+        // Fix tiny video surface stuck in top-left: Ensure proper resize mode and frame bounds
+        binding.player.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        binding.player.videoSurfaceView?.apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            requestLayout()
+        }
+
+        // Fix duplication: Hide old duplicate views from fragment_player.xml
+        binding.playerChannel.isGone = true
+        binding.playerSubscribe.isGone = true
+        binding.commentsToggle.isGone = true
+        runCatching {
+            binding.root.findViewById<View>(R.id.player_button_container)?.isGone = true
+            binding.root.findViewById<View>(R.id.rel_player_share)?.isGone = true
+            binding.root.findViewById<View>(R.id.rel_player_download)?.isGone = true
+            binding.root.findViewById<View>(R.id.rel_player_save)?.isGone = true
+            binding.root.findViewById<View>(R.id.rel_player_background)?.isGone = true
+            binding.root.findViewById<View>(R.id.rel_player_pip)?.isGone = true
+        }
+
         activity?.getSystemInsets()?.let { systemBars ->
             with(binding.root) {
                 setPadding(paddingLeft, paddingTop + systemBars.top, paddingRight, paddingBottom)
@@ -383,7 +403,6 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
             }
         }
 
-        // Observe comment count to update the preview card in DescriptionLayout
         commentsViewModel.commentCountLiveData.observe(viewLifecycleOwner) { count ->
             binding.descriptionLayout.setCommentCount(count)
         }
@@ -564,14 +583,12 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
             bundle.getString(IntentData.url)?.let { handleLink(it) }
         }
 
-        // Full-width vertical recommended feed layout (matching YouTube Screenshot 2)
         binding.relatedRecView.layoutManager = LinearLayoutManager(
             context,
             LinearLayoutManager.VERTICAL,
             false
         )
 
-        // DescriptionLayout click callbacks
         binding.descriptionLayout.onCommentsClick = {
             if (this::streams.isInitialized) openCommentsSheet()
         }
@@ -589,58 +606,11 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
 
         binding.descriptionLayout.handleLink = this::handleLink
 
-        binding.commentsToggle.setOnClickListener {
-            if (this::streams.isInitialized) openCommentsSheet()
-        }
-
-        binding.relPlayerShare.setOnClickListener {
-            if (this::streams.isInitialized) openShareDialog()
-        }
-
-        binding.relPlayerBackground.setOnClickListener {
-            switchToAudioMode()
-        }
-
-        binding.relPlayerPip.isVisible = isPipAvailable()
-        binding.relPlayerPip.setOnClickListener {
-            PictureInPictureCompat.enterPictureInPictureMode(requireActivity(), pipParams)
-            isEnteringPiPMode = true
-        }
-
-        binding.relPlayerSave.setOnClickListener {
-            if (!::streams.isInitialized) return@setOnClickListener
-            AddToPlaylistDialog().apply {
-                arguments = bundleOf(IntentData.videoInfo to streams.toStreamItem(videoId))
-            }.show(childFragmentManager, AddToPlaylistDialog::class.java.name)
-        }
-
         playerControlsBinding.skipPrev.setOnClickListener {
             PlayingQueue.getPrev()?.let { prev -> playVideo(prev) }
         }
         playerControlsBinding.skipNext.setOnClickListener {
             PlayingQueue.getNext()?.let { next -> playVideo(next) }
-        }
-
-        binding.relPlayerDownload.setOnClickListener {
-            if (!this::streams.isInitialized) return@setOnClickListener
-            DownloadHelper.startDownloadDialog(requireContext(), childFragmentManager, videoId)
-        }
-
-        binding.relPlayerScreenshot.setOnClickListener {
-            if (!this::streams.isInitialized) return@setOnClickListener
-            val surfaceView = binding.player.videoSurfaceView as? SurfaceView ?: return@setOnClickListener
-            val bmp = Bitmap.createBitmap(surfaceView.width, surfaceView.height, Bitmap.Config.ARGB_8888)
-
-            PixelCopy.request(surfaceView, bmp, { _ ->
-                screenshotBitmap = bmp
-                val currentPosition = playerController.currentPosition.toFloat() / 1000
-                openScreenshotFile.launch("${streams.title}-${currentPosition}.png")
-            }, handler)
-        }
-
-        binding.playerChannel.setOnClickListener {
-            if (!this::streams.isInitialized) return@setOnClickListener
-            NavigationHelper.navigateChannel(requireContext(), streams.uploaderUrl)
         }
     }
 
@@ -895,7 +865,6 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
         binding.descriptionLayout.collapseDescription()
         binding.descriptionLayout.isInvisible = !show
         binding.relatedRecView.isInvisible = !show
-        binding.playerChannel.isInvisible = !show
         playerBackgroundBinding.videoTransitionProgress.isVisible = !show
     }
 
@@ -926,41 +895,14 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
         binding.descriptionLayout.setStreams(streams)
         toggleVideoInfoVisibility(true)
 
-        // Trigger fetching comment count so the teaser card displays count
+        // Trigger comments load for comment count on the preview card
         commentsViewModel.videoIdLiveData.updateIfChanged(videoId)
-
-        binding.apply {
-            ImageHelper.loadImage(streams.uploaderAvatar, binding.playerChannelImage, true)
-            binding.playerChannelImage.isVisible = streams.uploaderAvatar != null
-
-            playerChannelName.text = streams.uploader
-            titleTextView.text = streams.title
-
-            playerChannelSubCount.text = context?.getString(
-                R.string.subscribers,
-                streams.uploaderSubscriberCount.formatShort()
-            )
-            playerChannelSubCount.isVisible = streams.uploaderSubscriberCount >= 0
-
-            relPlayerDownload.isVisible = !streams.isLive && !isOffline
-        }
 
         playerControlsBinding.exoTitle.text = streams.title
         chaptersViewModel.chaptersLiveData.postValue(streams.chapters)
 
         lifecycleScope.launch {
             showRelatedStreams()
-        }
-
-        if (streams.uploaderUrl != null) {
-            binding.playerSubscribe.setupSubscriptionButton(
-                streams.uploaderUrl!!.toID(),
-                streams.uploader,
-                streams.uploaderAvatar,
-                streams.uploaderVerified
-            )
-        } else {
-            binding.playerSubscribe.isGone = true
         }
 
         playerControlsBinding.seekbarPreview.isGone = true
@@ -995,7 +937,6 @@ class PlayerFragment : Fragment(R.layout.fragment_player), CustomPlayerCallback 
             streams.relatedStreams.filter { !it.title.isNullOrBlank() }
         }
 
-        // Full-width vertical card list matching YouTube recommendations in Screenshot 2
         binding.relatedRecView.adapter = VideoCardsAdapter(columnWidthDp = null).also { adapter ->
             adapter.submitList(relatedStreams)
         }

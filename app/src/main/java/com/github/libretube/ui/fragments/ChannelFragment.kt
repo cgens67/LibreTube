@@ -16,7 +16,6 @@ import androidx.viewpager2.widget.ViewPager2
 import com.github.libretube.R
 import com.github.libretube.api.MediaServiceRepository
 import com.github.libretube.api.obj.ChannelTab
-import com.github.libretube.api.obj.StreamItem
 import com.github.libretube.constants.IntentData
 import com.github.libretube.databinding.FragmentChannelBinding
 import com.github.libretube.extensions.TAG
@@ -44,7 +43,6 @@ class ChannelFragment : Fragment(R.layout.fragment_channel) {
     private var isLoading = true
 
     private lateinit var channelContentAdapter: ChannelContentAdapter
-
     private var isAppBarFullyExpanded: Boolean = true
     private val tabList = mutableListOf<ChannelTab>()
 
@@ -69,14 +67,13 @@ class ChannelFragment : Fragment(R.layout.fragment_channel) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         _binding = FragmentChannelBinding.bind(view)
         super.onViewCreated(view, savedInstanceState)
-        // Check if the AppBarLayout is fully expanded
+
         binding.channelAppBar.addOnOffsetChangedListener { _, verticalOffset ->
             isAppBarFullyExpanded = verticalOffset == 0
         }
 
         binding.pager.reduceDragSensitivity()
 
-        // Determine if the child can scroll up
         binding.channelRefresh.setOnChildScrollUpCallback { _, _ ->
             !isAppBarFullyExpanded
         }
@@ -88,7 +85,6 @@ class ChannelFragment : Fragment(R.layout.fragment_channel) {
         fetchChannel()
     }
 
-    // adjust sensitivity due to the issue of viewpager2 with SwipeToRefresh https://issuetracker.google.com/issues/138314213
     private fun ViewPager2.reduceDragSensitivity() {
         val recyclerViewField = ViewPager2::class.java.getDeclaredField("mRecyclerView")
         recyclerViewField.isAccessible = true
@@ -127,7 +123,6 @@ class ChannelFragment : Fragment(R.layout.fragment_channel) {
         }
         val binding = _binding ?: return@launch
 
-        // needed if the channel gets loaded by the ID
         channelId = response.id
         channelName = response.name
 
@@ -174,10 +169,16 @@ class ChannelFragment : Fragment(R.layout.fragment_channel) {
             binding.channelName
                 .setCompoundDrawablesWithIntrinsicBounds(0, 0, R.drawable.ic_verified, 0)
         }
-        binding.channelSubs.text = resources.getString(
-            R.string.subscribers,
-            response.subscriberCount.formatShort()
-        )
+
+        // Format metadata: @handle • 12.3k subscribers • 50 videos
+        val subsFormatted = response.subscriberCount.formatShort()
+        val handle = if (!response.id.isNullOrBlank()) "@${response.name?.replace(" ", "")}" else ""
+        binding.channelSubs.text = listOfNotNull(
+            handle.takeIf { it.isNotBlank() },
+            resources.getString(R.string.subscribers, subsFormatted),
+            if (response.tabs.isNotEmpty() && response.relatedStreams.isNotEmpty()) "${response.relatedStreams.size} videos" else null
+        ).joinToString(" • ")
+
         if (response.description.orEmpty().isBlank()) {
             binding.channelDescription.isGone = true
         } else {
@@ -224,20 +225,5 @@ class ChannelFragment : Fragment(R.layout.fragment_channel) {
 
     companion object {
         private const val VIDEOS_TAB_KEY = "videos"
-    }
-}
-
-class ChannelContentAdapter(
-    private val list: List<ChannelTab>,
-    private val channelId: String?,
-    fragment: Fragment
-) : FragmentStateAdapter(fragment) {
-    override fun getItemCount() = list.size
-
-    override fun createFragment(position: Int) = ChannelContentFragment().apply {
-        arguments = bundleOf(
-            IntentData.tabData to list[position],
-            IntentData.channelId to channelId
-        )
     }
 }
